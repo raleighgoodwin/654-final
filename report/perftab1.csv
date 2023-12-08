@@ -1,0 +1,4 @@
+"","Model","Rsq","MAE","RMSE"
+"1","Linear Regression",0.00168,19.78599,26.30839
+"2","Linear Regression with Ridge Penalty",1e-05,8.89166,9.22951
+"3","Linear Regression with Elastic Net Penalty",4e-05,8.89141,9.23002

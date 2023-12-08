@@ -1,0 +1,188 @@
+---
+title: "decision trees"
+output: html_document
+---
+
+```{r load libraries}
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(recipes)
+library(tm)
+library(glmnet)
+library(rpart)
+library(vip)
+library(tidyverse)
+library(rio)
+library(here)
+
+
+df1 <- import(here("data", "df1.csv"))
+df_tr <- import(here::here("data", "trainset.csv"))
+df_te <- import(here::here("data", "testset.csv"))
+```
+
+# blueprint, tr/te, cv
+```{r variable roles}
+outcomeV <- "cc_risk_sc"
+df1$cc_risk_sc <- df1$cc_risk_sc %>%  as.numeric()
+
+# categorical variables
+catV <- df1 %>% 
+  select(gender_b, race_b
+         ) 
+
+catVlab <- catV %>% 
+  colnames()
+
+df1[catVlab] <- lapply(df1[catVlab], as.factor)
+
+# continuous variables
+contV <- df1 %>% 
+  select(dem_age_b, dem_ed_b, conservatism_f, sc_scored,
+         rav_scored, 
+         aot_scored, nfc_scored,
+         vl_scored, contains("_ch"), cc_risk_sc
+         ) 
+
+contVlab <- contV %>% 
+  colnames()
+
+df1[contVlab] <- lapply(df1[contVlab], as.numeric)
+
+# sentence embeddings variables
+stV <- df1 %>% 
+  select(contains("o1"), contains("s1"), contains("s2")) %>% 
+  colnames()
+
+stVlab <- stV %>% 
+  colnames()
+
+df1[stVlab] <- lapply(df1[stVlab], as.numeric)
+
+# predictors info
+predV <- c(catVlab, contVlab, stVlab)
+predN <- ncol(df1)-1
+```
+
+```{r blueprint}
+blueprint <- recipe(x = df1,
+                          vars  = colnames(df1),
+                          roles = c('outcome',rep('predictor', predN))) %>% 
+  step_normalize(c(contVlab, stVlab)) %>% 
+  step_dummy(c(gender_b, race_b), one_hot = TRUE)
+```
+
+```{r 10folds}
+tr_r <- df_tr[sample(nrow(df_tr)),] # randomize row order in training set
+
+tr_folds <- cut(seq(1,nrow(tr_r)),breaks=10,labels=FALSE)
+
+fold_indices <- vector('list',10)
+
+for(i in 1:10){
+  fold_indices[[i]] <- which(tr_folds!=i)
+}
+
+tr_cv <- trainControl(method = "cv",
+                             index  = fold_indices)
+```
+
+```{r dt grid, eval=F}
+dt_grid <- data.frame(cp=seq(0,300,5))
+```
+
+```{r train/tune dt p1, eval=F}
+maxdepth <- seq(40, 70, 10)
+
+minsplit <- seq(10, 30, 10)
+
+repnum <- length(maxdepth) * length(minsplit)
+
+dt_hps <- data.frame(split = unlist(lapply(minsplit, rep, length(maxdepth))),
+                     depth = rep(maxdepth, length(minsplit)))
+
+dt_mods <- list(NA)
+
+for(i in 1:nrow(dt_hps)){
+
+  dt_mods[[i]] <- NA
+
+}
+```
+
+```{r train/tune dt p2, eval=F}
+# train models
+for(i in 1:length(dt_mods)){
+    
+dt_mods[[i]] <- caret::train(blueprint,
+                            data      = df_tr,
+                            method    = 'rpart',
+                            tuneGrid  = dt_grid,
+                            trControl = tr_cv,
+                            control   = list(minsplit = dt_hps[i,1],
+                                             minbucket = 2,
+                                             maxdepth = dt_hps[i,2]))
+}
+
+
+```
+
+```{r save dt, eval=F}
+# save models
+for(i in 1:length(dt_mods)) {
+  
+  saveRDS(dt_mods[[i]], file = here::here("models", 
+                                          paste0("dt_mod", i, ".rds")))
+  
+}
+```
+
+The following code won't run at the moment, but I wanted to include it anyway.
+
+```{r dt best tune / plots, eval=F}
+tune <- list(NA)
+
+for (i in 1:length(dt_mods)) {
+  tune[[i]] = dt_mods[[i]]$bestTune
+}
+
+dt_plots <- lapply(dt_mods, plot)
+
+for(i in 1:length(dt_plots)) {
+  png(df_plots[[i]], file=here::here("plots", paste0("dt", i, ".png")))
+  df_plots[[i]]
+  dev.off()
+}
+```
+
+```{r dt predict, eval=F}
+dt_pred <- list(NA)
+
+for (i in 1:3) {
+  
+  dt_pred[[i]] <- predict(dt_mods[[i]], df_te)
+  
+}
+```
+
+```{r dt te perf, eval=F}
+dt_perf <- data.frame(Model = NA,
+                      Rsq = NA,
+                     MAE = NA,
+                     RMSE = NA)
+
+for(i in 1:length(dt_mods)) {
+
+    dt_perf$Model[i] = paste0("Decision Tree #",i)
+    dt_perf$Rsq[i] = cor(df_te$cc_risk_sc,dt_pred[[i]])^2 %>% 
+      round(5)
+    dt_perf$MAE[i] = mean(abs(df_te$cc_risk_sc - dt_pred[[i]])) %>%
+      round(5)
+    dt_perf$RMSE[i] = sqrt(mean((df_te$cc_risk_sc - dt_pred[[i]])^2)) %>%
+      round(5)
+
+}
+```
+
+
